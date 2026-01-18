@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import json
 import os
-from dataclasses import replace
+from dataclasses import asdict, replace
+from datetime import datetime
 from typing import Dict, List, Optional, Tuple
 
 import pandas as pd
@@ -76,6 +78,8 @@ def run_experiment_suite(
     out_dir: str = "./tiur_out",
     show_plots: bool = True,
     data_dir: str = "./data",
+    save_plots: bool = True,
+    persist_checkpoints: bool = True,
 ) -> Tuple[pd.DataFrame, pd.DataFrame]:
     """Run a suite of experiments.
 
@@ -85,12 +89,29 @@ def run_experiment_suite(
     """
     os.makedirs(out_dir, exist_ok=True)
 
+    # Record a small manifest for provenance
+    manifest = {
+        "created_at": datetime.utcnow().isoformat() + "Z",
+        "n_runs": len(suite),
+    }
+    with open(os.path.join(out_dir, "manifest.json"), "w", encoding="utf-8") as f:
+        json.dump(manifest, f, indent=2, default=str)
+
     all_rows: List[Dict] = []
     summaries: List[Dict] = []
 
     for cfg in suite:
+        run_dir = os.path.join(out_dir, cfg.name)
+        os.makedirs(run_dir, exist_ok=True)
+
+        # Save config for this run
+        with open(os.path.join(run_dir, "config.json"), "w", encoding="utf-8") as f:
+            json.dump(asdict(cfg), f, indent=2, default=str)
+
         trainer = EnsembleTrainer(cfg, data_dir=data_dir)
-        logs = trainer.train()
+        # If the runtime dies, we still have partial logs on disk.
+        log_csv_path = os.path.join(run_dir, "logs_live.csv") if persist_checkpoints else None
+        logs = trainer.train(log_csv_path=log_csv_path)
 
         for row in logs:
             all_rows.append(row)
@@ -118,10 +139,16 @@ def run_experiment_suite(
         summaries.append(summary)
 
         # Save per-run CSV for easy inspection
+        pd.DataFrame(logs).to_csv(os.path.join(run_dir, "logs.csv"), index=False)
+        # Also save a flat copy at the top-level for convenience
         pd.DataFrame(logs).to_csv(os.path.join(out_dir, f"{cfg.name}_logs.csv"), index=False)
 
         if show_plots:
-            plot_single_run(pd.DataFrame(logs), title=cfg.name)
+            plot_single_run(
+                pd.DataFrame(logs),
+                title=cfg.name,
+                save_dir=run_dir if save_plots else None,
+            )
 
     logs_df = pd.DataFrame(all_rows)
     summary_df = pd.DataFrame(summaries).sort_values("final_loss")
@@ -130,7 +157,7 @@ def run_experiment_suite(
     summary_df.to_csv(os.path.join(out_dir, "summary.csv"), index=False)
 
     if show_plots:
-        plot_suite_overview(logs_df, summary_df)
+        plot_suite_overview(logs_df, summary_df, save_dir=out_dir if save_plots else None)
 
     return logs_df, summary_df
 
@@ -145,4 +172,11 @@ def run_set1_quick(
     """One-liner to run a Colab-friendly Experiment Set 1 suite."""
     base = RunConfig(device=device)
     suite = make_experiment_suite_set1(base, fast=fast)
-    return run_experiment_suite(suite, out_dir=out_dir, show_plots=True, data_dir=data_dir)
+    return run_experiment_suite(
+        suite,
+        out_dir=out_dir,
+        show_plots=True,
+        data_dir=data_dir,
+        save_plots=True,
+        persist_checkpoints=True,
+    )

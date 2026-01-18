@@ -4,7 +4,6 @@ from typing import Tuple
 
 import torch
 import torch.nn as nn
-from torchvision import models
 
 
 class SmallCNN(nn.Module):
@@ -44,7 +43,18 @@ def infer_in_channels(dataset: str) -> int:
 
 
 def make_resnet18(in_channels: int, num_classes: int) -> nn.Module:
-    m = models.resnet18(num_classes=num_classes)
+    # Lazy import so that users can run the quick suite (SmallCNN) even if
+    # torchvision is not installed or is temporarily broken in the runtime.
+    try:
+        from torchvision import models as tv_models  # type: ignore
+    except Exception as e:
+        raise ImportError(
+            "torchvision failed to import, but resnet18 was requested. "
+            "In Colab, avoid reinstalling torchvision unless you also install a matching torch build. "
+            f"Original error: {e!r}"
+        )
+
+    m = tv_models.resnet18(num_classes=num_classes)
     if in_channels != 3:
         # Replace first conv to accept 1-channel input
         old = m.conv1

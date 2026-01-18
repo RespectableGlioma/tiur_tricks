@@ -9,30 +9,51 @@ using TIUR-style diagnostics:
 - drift vs churn decomposition: `I_mu` vs `I_sigma`
 - speed-limit efficiency: `eta = |d<L>/dt| / (DeltaL * sqrt(I_F))`
 
-## Minimal Colab steps
+## Easiest option: run the included notebook
+
+This repo ships with a **top-level Colab notebook**:
+
+- `TIUR_Set1_Quickstart.ipynb`
+
+Open it in Colab, flip Runtime → **GPU**, and run all cells. The notebook will:
+
+1) mount Google Drive
+2) install dependencies
+3) run the Experiment Set 1 suite
+4) **save all logs + plots to Drive** (so you don't lose results if the runtime dies)
+
+## Minimal Colab steps (manual)
 
 1) **Upload** the zip (or this folder) into Colab.
 
 2) In a Colab cell:
 
 ```python
-!pip install -q tqdm pandas matplotlib torchvision
+!pip install -q tqdm pandas matplotlib
+
+# NOTE: Colab already includes torch + torchvision.
+# Avoid reinstalling torchvision unless you also install a matching torch build.
 
 import sys
-sys.path.append("/content/tiur_tricks_colab")  # adjust if you unzip elsewhere
+sys.path.insert(0, "/content/tiur_tricks_colab")  # adjust if you unzip elsewhere
 
 from tiur_tricks import run_set1_quick
 
 logs_df, summary_df = run_set1_quick(
     device="cuda",
-    out_dir="/content/tiur_out",
+    out_dir="/content/drive/MyDrive/tiur_tricks_results/run1",
     fast=True,   # True = small grid; False = bigger grid (adds optional deps)
 )
 ```
 
 3) Inspect outputs:
-- `/content/tiur_out/summary.csv`
-- `/content/tiur_out/<run_name>_logs.csv`
+
+- `<out_dir>/summary.csv`
+- `<out_dir>/<run_name>/logs.csv`
+- `<out_dir>/<run_name>/*.png` (plots)
+
+Additionally, if `persist_checkpoints=True` (default in `run_set1_quick`), each run writes
+`logs_live.csv` as it trains so partial progress is preserved on preemptible runtimes.
 
 ## Notes / Extensions
 

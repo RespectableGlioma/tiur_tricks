@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import csv
 import math
 import os
 import time
@@ -295,10 +296,18 @@ class EnsembleTrainer:
         for opt in self.opts:
             set_lr(opt, lr)
 
-    def train(self) -> List[Dict[str, float]]:
+    def train(self, *, log_csv_path: Optional[str] = None) -> List[Dict[str, float]]:
         cfg = self.cfg
         device = cfg.device
         criterion = self._criterion().to(device)
+
+        live_f = None
+        live_writer = None
+        wrote_header = False
+        if log_csv_path is not None:
+            os.makedirs(os.path.dirname(log_csv_path), exist_ok=True)
+            # Append mode: if a previous partial file exists, keep it.
+            live_f = open(log_csv_path, "a", newline="", encoding="utf-8")
 
         swa_start_step = None
         if cfg.swa_start_frac is not None:
@@ -392,6 +401,18 @@ class EnsembleTrainer:
                 row.update({"name": cfg.name, "lr": get_lr(self.opts[0])})
                 self.logs.append(row)
 
+                # Persist checkpoint row immediately (useful on Colab / preemptible runtimes)
+                if live_f is not None:
+                    if (not wrote_header) and (live_writer is None):
+                        live_writer = csv.DictWriter(live_f, fieldnames=list(row.keys()))
+                        # Write header only if file is empty
+                        if live_f.tell() == 0:
+                            live_writer.writeheader()
+                        wrote_header = True
+                    assert live_writer is not None
+                    live_writer.writerow(row)
+                    live_f.flush()
+
                 # Controller uses last interval's churn/efficiency to set LR for next interval
                 self._controller_update(step=step + 1, row=row)
 
@@ -401,5 +422,8 @@ class EnsembleTrainer:
                     "churn": f"{row.get('churn_frac', float('nan')):.2f}",
                     "η": f"{row.get('efficiency', float('nan')):.2f}",
                 })
+
+        if live_f is not None:
+            live_f.close()
 
         return self.logs

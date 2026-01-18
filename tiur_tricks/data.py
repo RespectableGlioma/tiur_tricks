@@ -6,7 +6,34 @@ from typing import Iterable, List, Optional, Sequence, Tuple
 
 import torch
 from torch.utils.data import DataLoader, Dataset, SubsetRandomSampler, WeightedRandomSampler
-from torchvision import datasets, transforms
+
+# NOTE:
+# This harness uses torchvision datasets/transforms. Colab typically comes with a
+# compatible torch+torchvision pair preinstalled. Unfortunately, it's easy to
+# accidentally break that by `pip install torchvision` (or by installing a
+# torch/torchvision pair that doesn't match the CUDA/ABI in the runtime), which
+# can lead to confusing import-time errors such as:
+#   RuntimeError: operator torchvision::nms does not exist
+#
+# To make the package more robust, we treat torchvision as an optional dependency
+# at import time and raise a clear error only when datasets are requested.
+try:  # pragma: no cover
+    from torchvision import datasets, transforms
+
+    _TORCHVISION_IMPORT_ERROR: Exception | None = None
+except Exception as e:  # pragma: no cover
+    datasets = None  # type: ignore
+    transforms = None  # type: ignore
+    _TORCHVISION_IMPORT_ERROR = e
+
+
+def _require_torchvision() -> None:
+    if datasets is None or transforms is None:
+        raise ImportError(
+            "torchvision failed to import. This harness needs torchvision for datasets/transforms. "
+            "If you're in Colab, avoid reinstalling torchvision unless you also install a matching torch build. "
+            f"Original error: {_TORCHVISION_IMPORT_ERROR!r}"
+        )
 
 
 class IndexedSubset(Dataset):
@@ -55,6 +82,9 @@ def _mnist_transforms() -> Tuple[transforms.Compose, transforms.Compose]:
 
 def get_datasets(dataset: str, data_dir: str = "./data") -> Tuple[Dataset, Dataset]:
     dataset = dataset.lower()
+
+    # Fail fast with a clear message if torchvision is broken/missing.
+    _require_torchvision()
 
     if dataset == "cifar10":
         train_tf, eval_tf = _cifar10_transforms()
