@@ -11,12 +11,33 @@ import pandas as pd
 from .config import RunConfig
 from .plotting import plot_suite_overview, plot_single_run
 from .trainer import EnsembleTrainer
+from .data import num_train_steps
+
+
+def _approx_train_size(cfg: RunConfig) -> int:
+    """Approximate training set size without instantiating datasets.
+
+    Used to tune curriculum/EMA/controller defaults for very short Colab runs.
+    """
+    if cfg.subset_train is not None:
+        return int(cfg.subset_train)
+
+    ds = cfg.dataset.lower()
+    if ds == "cifar10":
+        return 50_000
+    if ds in {"mnist", "fashionmnist", "fashion-mnist"}:
+        return 60_000
+    # Fallback: a reasonable default
+    return 50_000
 
 
 def make_experiment_suite_set1(base: Optional[RunConfig] = None, *, fast: bool = True) -> List[RunConfig]:
     """Create a suite of configs that cover Experiment Set 1.
 
-    If fast=True, keeps the grid small and Colab-friendly.
+    Notes:
+      - In fast/Colab mode, we avoid redundant "baseline" duplicates to save time.
+      - Some tricks (EMA, easy2hard curriculum) are sensitive to *total training steps*.
+        We automatically adapt those defaults so quick runs don't look artificially bad.
     """
     if base is None:
         base = RunConfig()
@@ -24,54 +45,66 @@ def make_experiment_suite_set1(base: Optional[RunConfig] = None, *, fast: bool =
     # Use frequent checkpoints for meaningful TIUR curves
     base = replace(base, checkpoint_every=50, eval_batches=20)
 
+    # Approximate total steps (needed to pick sensible curriculum/EMA settings)
+    n_train = _approx_train_size(base)
+    total_steps = num_train_steps(base, n_train=n_train)
+
     suite: List[RunConfig] = []
 
+    # Baseline (single)
+    baseline = replace(
+        base,
+        name="baseline",
+        optimizer="adamw",
+        sampler="iid",
+        grad_noise_std=0.0,
+        ema_decay=None,
+        swa_start_frac=None,
+        clip_grad_norm=None,
+        use_sam=False,
+        use_tiur_controller=False,
+    )
+    suite.append(baseline)
+
     # 1) Optimizer comparison
-    suite.append(replace(base, name="opt_adamw", optimizer="adamw"))
-    suite.append(replace(base, name="opt_sgd", optimizer="sgd", lr=0.05, weight_decay=1e-4))
+    suite.append(replace(baseline, name="opt_sgd", optimizer="sgd", lr=0.05, weight_decay=1e-4))
 
     if not fast:
-        suite.append(replace(base, name="opt_adafactor", optimizer="adafactor"))
-        suite.append(replace(base, name="opt_shampoo", optimizer="shampoo"))
+        suite.append(replace(baseline, name="opt_adafactor", optimizer="adafactor"))
+        suite.append(replace(baseline, name="opt_shampoo", optimizer="shampoo"))
 
     # 2) Noise / temperature sweep (gradient noise)
-    suite.append(replace(base, name="noise_0", grad_noise_std=0.0))
-    suite.append(replace(base, name="noise_1e-3", grad_noise_std=1e-3))
-    suite.append(replace(base, name="noise_1e-2", grad_noise_std=1e-2))
-
     if not fast:
-        suite.append(replace(base, name="noise_5e-2", grad_noise_std=5e-2))
+        suite.append(replace(baseline, name="noise_0", grad_noise_std=0.0))
+    suite.append(replace(baseline, name="noise_1e-3", grad_noise_std=1e-3))
+    suite.append(replace(baseline, name="noise_1e-2", grad_noise_std=1e-2))
+    if not fast:
+        suite.append(replace(baseline, name="noise_5e-2", grad_noise_std=5e-2))
 
     # 3) TIUR-guided controller vs baseline
-    suite.append(replace(base, name="ctrl_off", use_tiur_controller=False))
-    suite.append(replace(base, name="ctrl_on", use_tiur_controller=True))
+    # In short runs, the absolute scale of churn_frac depends on the estimator.
+    # If controller_target_churn=None (default), we auto-calibrate to the first observed churn.
+    suite.append(replace(baseline, name="ctrl_on", use_tiur_controller=True))
 
     # 4) Curriculum / sampling
-    suite.append(replace(base, name="sampler_iid", sampler="iid"))
-    suite.append(replace(base, name="sampler_easy2hard", sampler="easy2hard"))
-    suite.append(replace(base, name="sampler_lossmixed", sampler="loss_mixed"))
+    # Important: For Colab-quick runs, the default curriculum_steps=1000 can exceed total_steps.
+    # That would mean we *never* expose the model to most of the dataset.
+    # Fix: make curriculum_steps track the run length so we reach the full set by the end.
+    suite.append(replace(baseline, name="sampler_easy2hard", sampler="easy2hard", curriculum_steps=max(1, total_steps)))
+    suite.append(replace(baseline, name="sampler_lossmixed", sampler="loss_mixed"))
 
     # 5) Regularizers
-    suite.append(replace(base, name="reg_baseline", ema_decay=None, swa_start_frac=None, clip_grad_norm=None, use_sam=False))
-    suite.append(replace(base, name="reg_ema", ema_decay=0.999))
-    suite.append(replace(base, name="reg_clip", clip_grad_norm=1.0))
+    # EMA: if total_steps is very small, a huge decay (0.999) will keep EMA near init.
+    # Use a shorter-timescale EMA by default for quick runs, while still letting you override.
+    ema_decay = 0.99 if total_steps < 500 else 0.999
+    suite.append(replace(baseline, name="reg_ema", ema_decay=ema_decay))
+    suite.append(replace(baseline, name="reg_clip", clip_grad_norm=1.0))
 
     if not fast:
-        suite.append(replace(base, name="reg_swa", swa_start_frac=0.6))
-        suite.append(replace(base, name="reg_sam", use_sam=True, optimizer="adamw"))
+        suite.append(replace(baseline, name="reg_swa", swa_start_frac=0.6))
+        suite.append(replace(baseline, name="reg_sam", use_sam=True, optimizer="adamw"))
 
-    # Deduplicate configs by name (easy if user edits above)
-    seen = set()
-    unique: List[RunConfig] = []
-    for c in suite:
-        if c.name in seen:
-            continue
-        seen.add(c.name)
-        unique.append(c)
-
-    return unique
-
-
+    return suite
 def run_experiment_suite(
     suite: List[RunConfig],
     *,

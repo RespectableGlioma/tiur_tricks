@@ -97,6 +97,9 @@ class EnsembleTrainer:
         self.tiur_state = TIURState()
         self.logs: List[Dict[str, float]] = []
 
+        # Controller auto-calibration (if cfg.controller_target_churn is None)
+        self._controller_target: Optional[float] = None
+
     def _init_ensemble(self):
         cfg = self.cfg
 
@@ -280,7 +283,14 @@ class EnsembleTrainer:
         churn = float(row["churn_frac"])
         eff = float(row.get("efficiency", 0.0))
 
-        target = cfg.controller_target_churn
+        # Target churn: if None, lock to the first observed churn value for this run.
+        if cfg.controller_target_churn is None:
+            if self._controller_target is None:
+                self._controller_target = churn
+            target = float(self._controller_target)
+        else:
+            target = float(cfg.controller_target_churn)
+
         band = cfg.controller_band
         low = target - band
         high = target + band
@@ -295,6 +305,7 @@ class EnsembleTrainer:
 
         for opt in self.opts:
             set_lr(opt, lr)
+
 
     def train(self, *, log_csv_path: Optional[str] = None) -> List[Dict[str, float]]:
         cfg = self.cfg

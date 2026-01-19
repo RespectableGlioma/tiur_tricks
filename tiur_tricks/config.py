@@ -75,7 +75,7 @@ class RunConfig:
 
     # TIUR-guided controller
     use_tiur_controller: bool = False
-    controller_target_churn: float = 0.35
+    controller_target_churn: Optional[float] = None  # None = auto-calibrate to first observed churn
     controller_band: float = 0.10
     controller_lr_up: float = 1.10
     controller_lr_down: float = 0.70
