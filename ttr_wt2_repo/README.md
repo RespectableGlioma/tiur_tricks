@@ -8,12 +8,32 @@ Refactor of the Colab notebook into a runnable repo for **TIUR / TTR / J-finder*
 - A **multi-GPU sweep** CLI (`python -m ttr_wt2.sweep`) that can saturate an 8×A100 node via *task parallelism* (one experiment per GPU worker).
 - Minimal deps and scripts to install on a vanilla Ubuntu instance.
 
+## Airline proof this
+o keep your work running if SSH drops, use a named tmux session.
+
+1. Start a new named session:
+```
+tmux new -s my_work
+```
+(Replace my_work with any name you like)
+
+2. Detach from the session (leave it running in background): Press Ctrl+b, then release both and press d.
+
+3. Reattach to the session (after reconnecting SSH):
+```
+tmux attach -t my_work
+```
+4. List all running sessions:
+```
+tmux ls
+```
+
 ## Quickstart (Ubuntu + 8×A100)
 
 1) Clone and bootstrap
 
 ```bash
-git clone <your-git-url-here>
+git clone https://github.com/RespectableGlioma/tiur_tricks.git
 cd ttr-wt2
 bash scripts/setup_ubuntu.sh
 source .venv/bin/activate

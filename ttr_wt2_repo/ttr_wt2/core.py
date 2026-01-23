@@ -67,6 +67,28 @@ MODEL_SIZES: Dict[str, Dict[str, Any]] = {
     "large":  {"n_layer": 24, "n_head": 16, "n_embd": 1024, "batch_size": 16},
 }
 
+DEFAULT_MODEL_SIZES = MODEL_SIZES
+
+@dataclass
+class ExperimentConfig:
+    model_size: str = "small"
+    mode: str = "ttr"
+    seed: int = 0
+    peak_lr: float = 0.03
+    J_target: Optional[float] = None
+    total_steps: int = 2000
+    warmup_frac: float = 0.1
+    block_size: int = 128
+    train_batch_size: int = 64
+    eval_batch_size: int = 64
+    eval_every: int = 200
+    eval_max_batches: int = 50
+    use_bf16: bool = True
+    clip_norm: float = 1.0
+    weight_decay: float = 0.1
+    keep_traces: bool = False
+    device_str: str = "cuda"
+
 
 # -------------------------
 # Helpers
@@ -636,6 +658,8 @@ def run_j_finder(
     ema_beta: float = 0.98,
     increase_frac: float = 0.10,
     safety: float = 0.5,
+    weight_decay: float = WEIGHT_DECAY,
+    use_bf16: bool = USE_BF16,
 ) -> Tuple[float, Dict[str, Any], Dict[str, Any]]:
     """Thermodynamic Range Test (TRT) / J-finder.
 
@@ -651,7 +675,7 @@ def run_j_finder(
     train_iter = iter(data.train_loader)
 
     model = make_model(model_size, tokenizer=data.tokenizer, seed=seed, device=device)
-    opt = ManualAdamW(model.parameters(), betas=BETAS, eps=EPS, weight_decay=WEIGHT_DECAY)
+    opt = ManualAdamW(model.parameters(), betas=BETAS, eps=EPS, weight_decay=weight_decay)
     probe_pos = probe_positions()
 
     t0 = time.time()
@@ -685,6 +709,7 @@ def run_j_finder(
             J_target=Jt,
             probe_pos=probe_pos,
             device=device,
+            use_bf16=use_bf16,
         )
 
         # EMA(loss)
@@ -757,7 +782,38 @@ def run_j_finder(
 # -------------------------
 
 
-def run_one(
+def run_one(cfg: ExperimentConfig) -> Dict[str, Any]:
+    """Run a single training run from config."""
+    device = torch.device(cfg.device_str) if cfg.device_str else get_device()
+    
+    data = make_loaders(
+        train_batch_size=cfg.train_batch_size,
+        eval_batch_size=cfg.eval_batch_size,
+        block_size=cfg.block_size,
+    )
+    
+    warmup_steps = int(cfg.total_steps * cfg.warmup_frac)
+    
+    return _run_one_internal(
+        model_size=cfg.model_size,
+        mode=cfg.mode,
+        seed=cfg.seed,
+        peak_lr=cfg.peak_lr,
+        data=data,
+        device=device,
+        J_target=cfg.J_target,
+        keep_traces=cfg.keep_traces,
+        total_steps=cfg.total_steps,
+        warmup_steps=warmup_steps,
+        eval_every=cfg.eval_every,
+        eval_max_batches=cfg.eval_max_batches,
+        use_bf16=cfg.use_bf16,
+        clip_norm=cfg.clip_norm,
+        weight_decay=cfg.weight_decay,
+    )
+
+
+def _run_one_internal(
     model_size: str,
     mode: str,
     seed: int,
@@ -770,8 +826,11 @@ def run_one(
     warmup_steps: int = WARMUP_STEPS,
     eval_every: int = EVAL_EVERY,
     eval_max_batches: int = EVAL_MAX_BATCHES,
+    use_bf16: bool = USE_BF16,
+    clip_norm: float = CLIP_NORM,
+    weight_decay: float = WEIGHT_DECAY,
 ) -> Dict[str, Any]:
-    """Run a single training run and return summary dict."""
+    """Internal implementation of the run logic."""
 
     assert model_size in MODEL_SIZES, f"Unknown model_size: {model_size}"
     assert mode in {"nowarmup", "warmup", "ttr", "autottr", "jfinder"}, f"Unknown mode: {mode}"
@@ -795,6 +854,8 @@ def run_one(
             ema_beta=0.98,
             increase_frac=0.10,
             safety=0.5,
+            weight_decay=weight_decay,
+            use_bf16=use_bf16,
         )
         J_target = J_star
         jfinder_info = info
@@ -802,7 +863,7 @@ def run_one(
         seed_all(seed)
 
     model = make_model(model_size, tokenizer=data.tokenizer, seed=seed, device=device)
-    opt = ManualAdamW(model.parameters(), betas=BETAS, eps=EPS, weight_decay=WEIGHT_DECAY)
+    opt = ManualAdamW(model.parameters(), betas=BETAS, eps=EPS, weight_decay=weight_decay)
     probe_pos = probe_positions()
 
     controller: Optional[AutoTTRController] = None
@@ -851,6 +912,8 @@ def run_one(
                 probe_pos=probe_pos,
                 device=device,
                 compute_J=False,
+                use_bf16=use_bf16,
+                clip_norm=clip_norm,
             )
             lr_eff = lr_sched
             J_cand = float("nan")
@@ -869,6 +932,8 @@ def run_one(
                 J_target=Jt,
                 probe_pos=probe_pos,
                 device=device,
+                use_bf16=use_bf16,
+                clip_norm=clip_norm,
             )
 
             if controller is not None:
@@ -884,6 +949,7 @@ def run_one(
                 val_loader=data.val_loader,
                 device=device,
                 max_batches=eval_max_batches,
+                use_bf16=use_bf16,
             )
             val_loss = ev["val_loss"]
             val_ppl = ev["val_ppl"]
