@@ -19,12 +19,12 @@ rm cuda-keyring_1.1-1_all.deb
 sudo apt-get update
 
 # 3. Install Drivers + CUDA + Fabric Manager
-# (Using 535 drivers + CUDA 12.2 to match PyTorch 2.1+ requirements commonly)
+# (Using 550 drivers + CUDA 12.4 for Ubuntu 24.04 compatibility)
 sudo apt-get install -y --no-install-recommends \
-    cuda-drivers-535 \
-    cuda-toolkit-12-1 \
-    nvidia-fabricmanager-535 \
-    nvidia-utils-535 \
+    cuda-drivers-550 \
+    cuda-toolkit-12-4 \
+    nvidia-fabricmanager-550 \
+    nvidia-utils-550 \
     git \
     python3 \
     python3-venv \
@@ -41,9 +41,8 @@ python3 -m venv .venv
 source .venv/bin/activate
 python -m pip install -U pip wheel
 
-# Install PyTorch CUDA wheel (example for CUDA 12.1).
-# Adjust for your stack if needed.
-python -m pip install torch --index-url https://download.pytorch.org/whl/cu121
+# Install PyTorch CUDA wheel (CUDA 12.4)
+python -m pip install torch --index-url https://download.pytorch.org/whl/cu124
 
 # Install project deps
 python -m pip install -r requirements.txt
