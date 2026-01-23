@@ -17,6 +17,7 @@ The output directory will contain one JSON summary per run.
 from __future__ import annotations
 
 import argparse
+import dataclasses
 import json
 import multiprocessing as mp
 import os
@@ -74,7 +75,7 @@ def _worker(worker_id: int, gpu_id: int | None, tasks: List[Dict[str, Any]], bas
         except Exception as e:
             out_file = out_path / f"{_task_name(t)}.FAILED.txt"
             out_file.write_text(str(e))
-            progress_queue.put(("failed", _task_name(t)))
+            progress_queue.put(("failed", _task_name(t), str(e)))
 
 
 def main() -> None:
@@ -86,8 +87,29 @@ def main() -> None:
 
     cfg = yaml.safe_load(Path(args.config).read_text())
 
-    base_cfg: Dict[str, Any] = cfg.get("base", {})
-    sweep: Dict[str, Any] = cfg.get("sweep", {})
+    # Handle flat config vs nested config
+    if "sweep" not in cfg and "base" not in cfg:
+        # Assume flat structure
+        sweep_keys = {"model_sizes", "modes", "seeds", "peak_lrs"}
+        sweep = {k: cfg[k] for k in sweep_keys if k in cfg}
+        base_cfg = {k: v for k, v in cfg.items() if k not in sweep_keys}
+    else:
+        base_cfg = cfg.get("base", {})
+        sweep = cfg.get("sweep", {})
+
+    # Remap keys to match ExperimentConfig
+    remaps = {
+        "steps": "total_steps",
+        "batch_size": "train_batch_size",
+        "save_traces": "keep_traces",
+    }
+    for k, v in remaps.items():
+        if k in base_cfg:
+            base_cfg[v] = base_cfg.pop(k)
+
+    # Filter base_cfg to only valid fields
+    valid_fields = {f.name for f in dataclasses.fields(ExperimentConfig)}
+    base_cfg = {k: v for k, v in base_cfg.items() if k in valid_fields}
 
     model_sizes = sweep.get("model_sizes", ["small"])
     modes = sweep.get("modes", ["nowarmup"])
@@ -153,11 +175,15 @@ def main() -> None:
             if not any_alive and progress_queue.empty():
                 break
 
-            status, task_name = progress_queue.get(timeout=1.0)
+            item = progress_queue.get(timeout=1.0)
+            status = item[0]
+            task_name = item[1]
+
             completed += 1
             pbar.update(1)
             if status == "failed":
-                pbar.write(f"Task failed: {task_name}")
+                error_msg = item[2] if len(item) > 2 else "Unknown error"
+                pbar.write(f"Task failed: {task_name}\nError: {error_msg}")
         except queue.Empty:
             continue
         except KeyboardInterrupt:
