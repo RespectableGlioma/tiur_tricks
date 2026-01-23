@@ -24,6 +24,7 @@ from typing import Any, Dict, Iterable, Iterator, List, Optional, Tuple
 
 import numpy as np
 import torch
+from tqdm.auto import tqdm
 from torch import nn
 from torch.utils.data import DataLoader
 
@@ -88,6 +89,7 @@ class ExperimentConfig:
     weight_decay: float = 0.1
     keep_traces: bool = False
     device_str: str = "cuda"
+    use_tqdm: bool = True
 
 
 # -------------------------
@@ -810,6 +812,7 @@ def run_one(cfg: ExperimentConfig) -> Dict[str, Any]:
         use_bf16=cfg.use_bf16,
         clip_norm=cfg.clip_norm,
         weight_decay=cfg.weight_decay,
+        use_tqdm=cfg.use_tqdm,
     )
 
 
@@ -829,6 +832,7 @@ def _run_one_internal(
     use_bf16: bool = USE_BF16,
     clip_norm: float = CLIP_NORM,
     weight_decay: float = WEIGHT_DECAY,
+    use_tqdm: bool = True,
 ) -> Dict[str, Any]:
     """Internal implementation of the run logic."""
 
@@ -890,7 +894,11 @@ def _run_one_internal(
 
     t0 = time.time()
 
-    for step in range(total_steps):
+    iter_wrapper = range(total_steps)
+    if use_tqdm:
+        iter_wrapper = tqdm(iter_wrapper, desc=f"{model_size} {mode}", dynamic_ncols=True)
+
+    for step in iter_wrapper:
         try:
             batch = next(train_iter)
         except StopIteration:
@@ -939,6 +947,14 @@ def _run_one_internal(
             if controller is not None:
                 # Update J_target for next step
                 J_target = float(controller.update(loss=loss, J_applied=J_applied))
+
+        if use_tqdm:
+            metrics = {"loss": f"{loss:.4f}"}
+            if not math.isnan(J_applied):
+                metrics["J"] = f"{J_applied:.2e}"
+            if not math.isnan(best_val_ppl) and best_val_ppl != float("inf"):
+                metrics["ppl"] = f"{best_val_ppl:.2f}"
+            iter_wrapper.set_postfix(metrics)
 
         # Periodic eval
         val_loss = float("nan")

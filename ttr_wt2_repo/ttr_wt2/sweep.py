@@ -20,11 +20,13 @@ import argparse
 import json
 import multiprocessing as mp
 import os
+import queue
 from dataclasses import asdict
 from pathlib import Path
 from typing import Any, Dict, List
 
 import yaml
+from tqdm.auto import tqdm
 
 from .core import ExperimentConfig, run_one
 
@@ -46,7 +48,7 @@ def _task_name(t: Dict[str, Any]) -> str:
     return "__".join(parts)
 
 
-def _worker(worker_id: int, gpu_id: int | None, tasks: List[Dict[str, Any]], base_cfg: Dict[str, Any], out_dir: str) -> None:
+def _worker(worker_id: int, gpu_id: int | None, tasks: List[Dict[str, Any]], base_cfg: Dict[str, Any], out_dir: str, progress_queue: mp.Queue) -> None:
     # IMPORTANT: set CUDA_VISIBLE_DEVICES before importing torch in this process.
     if gpu_id is not None:
         os.environ["CUDA_VISIBLE_DEVICES"] = str(gpu_id)
@@ -61,15 +63,18 @@ def _worker(worker_id: int, gpu_id: int | None, tasks: List[Dict[str, Any]], bas
         cfg.seed = int(t["seed"])
         cfg.peak_lr = float(t["peak_lr"])
         cfg.J_target = t.get("J_target", None)
+        cfg.use_tqdm = False  # Disable per-run progress bar to avoid interleaving
 
         try:
             res = run_one(cfg)
             payload = {"task": t, "config": asdict(cfg), "result": res}
             out_file = out_path / f"{_task_name(t)}.json"
             out_file.write_text(json.dumps(payload, indent=2))
+            progress_queue.put(("success", _task_name(t)))
         except Exception as e:
             out_file = out_path / f"{_task_name(t)}.FAILED.txt"
             out_file.write_text(str(e))
+            progress_queue.put(("failed", _task_name(t)))
 
 
 def main() -> None:
@@ -102,17 +107,23 @@ def main() -> None:
     # (This is slower / less safe, but useful for CPU debugging.)
     if len(gpus) == 0:
         # We'll just run in-process.
-        for t in tasks:
+        print(f"Running {len(tasks)} tasks sequentially in-process...")
+        for t in tqdm(tasks, desc="Sweep"):
             cfg0 = ExperimentConfig(**base_cfg)
             cfg0.model_size = t["model_size"]
             cfg0.mode = t["mode"]
             cfg0.seed = int(t["seed"])
             cfg0.peak_lr = float(t["peak_lr"])
-            res = run_one(cfg0)
-            payload = {"task": t, "config": asdict(cfg0), "result": res}
-            out_path = Path(args.out_dir)
-            out_path.mkdir(parents=True, exist_ok=True)
-            (out_path / f"{_task_name(t)}.json").write_text(json.dumps(payload, indent=2))
+            cfg0.use_tqdm = False
+            
+            try:
+                res = run_one(cfg0)
+                payload = {"task": t, "config": asdict(cfg0), "result": res}
+                out_path = Path(args.out_dir)
+                out_path.mkdir(parents=True, exist_ok=True)
+                (out_path / f"{_task_name(t)}.json").write_text(json.dumps(payload, indent=2))
+            except Exception as e:
+                print(f"Task {_task_name(t)} failed: {e}")
         return
 
     # Round-robin distribute tasks to GPUs.
@@ -121,11 +132,41 @@ def main() -> None:
         buckets[i % len(gpus)].append(t)
 
     mp.set_start_method("spawn", force=True)
+    manager = mp.Manager()
+    progress_queue = manager.Queue()
+
     procs: List[mp.Process] = []
     for worker_id, (gpu_id, bucket) in enumerate(zip(gpus, buckets)):
-        p = mp.Process(target=_worker, args=(worker_id, gpu_id, bucket, base_cfg, args.out_dir), daemon=False)
+        p = mp.Process(target=_worker, args=(worker_id, gpu_id, bucket, base_cfg, args.out_dir, progress_queue), daemon=False)
         p.start()
         procs.append(p)
+
+    # Monitor progress
+    completed = 0
+    total = len(tasks)
+    pbar = tqdm(total=total, desc="Sweep Progress")
+    
+    while completed < total:
+        try:
+            # Check if all processes are dead (and we might hang if we don't check)
+            any_alive = any(p.is_alive() for p in procs)
+            if not any_alive and progress_queue.empty():
+                break
+
+            status, task_name = progress_queue.get(timeout=1.0)
+            completed += 1
+            pbar.update(1)
+            if status == "failed":
+                pbar.write(f"Task failed: {task_name}")
+        except queue.Empty:
+            continue
+        except KeyboardInterrupt:
+            print("\nSweep interrupted. Terminating workers...")
+            for p in procs:
+                p.terminate()
+            break
+
+    pbar.close()
 
     for p in procs:
         p.join()
