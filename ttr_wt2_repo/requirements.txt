@@ -1,0 +1,11 @@
+# NOTE: install torch separately to match your CUDA version (see README).
+
+numpy>=1.24
+pandas>=2.0
+tqdm>=4.66
+pyyaml>=6.0
+rich>=13.7
+datasets>=2.19
+transformers>=4.41
+safetensors>=0.4
+matplotlib>=3.8

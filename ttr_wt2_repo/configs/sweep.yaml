@@ -1,0 +1,39 @@
+# Example sweep config. Edit lists to taste.
+#
+# NOTE: For large sweeps, you may want to set eval_every higher or eval_max_batches lower.
+
+# Grid
+model_sizes: [small, medium, large]
+modes: [nowarmup, warmup, ttr, ttr_autottr, ttr_jfinder]
+seeds: [0, 1, 2, 3, 4]
+peak_lrs: [0.001, 0.003, 0.01, 0.03, 0.1]
+
+# Shared experiment settings
+steps: 2000
+eval_every: 200
+save_traces: false
+
+# Data / compute
+block_size: 128
+batch_size: 32
+eval_batch_size: 64
+eval_max_batches: 50
+num_workers: 4
+use_bf16: true
+clip_norm: 1.0
+
+# TTR / J-finder specifics
+probe_pos: -2
+jfinder_train_steps: 400
+jfinder_eval_every: 20
+jfinder_ema_beta: 0.9
+jfinder_rise_frac: 0.01
+j_backtrack_mult: 0.5
+j_backtrack_max_iters: 12
+j_safety: 0.05
+
+# AutoTTR
+autottr_update_every: 50
+autottr_ema_beta: 0.95
+autottr_j_step_frac: 0.05
+autottr_j_spike_tol: 0.35

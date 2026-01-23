@@ -1,0 +1,37 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ttr-wt2"
+version = "0.1.0"
+description = "WT2 experiments for TIUR/TTR (J-finder, AutoTTR)"
+readme = "README.md"
+requires-python = ">=3.10"
+license = {text = "MIT"}
+
+dependencies = [
+  "numpy>=1.24",
+  "pandas>=2.0",
+  "tqdm>=4.66",
+  "pyyaml>=6.0",
+  "rich>=13.7",
+  "datasets>=2.19",
+  "transformers>=4.41",
+  "safetensors>=0.4",
+]
+
+[project.optional-dependencies]
+wandb = ["wandb>=0.17"]
+
+[project.scripts]
+ttr-wt2-run = "ttr_wt2.run:main"
+ttr-wt2-sweep = "ttr_wt2.sweep:main"
+ttr-wt2-aggregate = "ttr_wt2.aggregate:main"
+
+[tool.setuptools]
+package-dir = {"" = "."}
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["ttr_wt2*"]
