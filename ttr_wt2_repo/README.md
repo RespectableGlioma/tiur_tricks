@@ -10,6 +10,9 @@ Refactor of the Colab notebook into a runnable repo for **TIUR / TTR / J-finder*
 
 ## Airline proof this
 o keep your work running if SSH drops, use a named tmux session.
+```
+ssh -i "nyuolab_flaws.pem" ubuntu@ec2-54-161-32-16.compute-1.amazonaws.com
+```
 
 1. Start a new named session:
 ```

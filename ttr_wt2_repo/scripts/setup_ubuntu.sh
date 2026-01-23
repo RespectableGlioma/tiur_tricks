@@ -24,6 +24,7 @@ sudo apt-get install -y --no-install-recommends \
     cuda-drivers-535 \
     cuda-toolkit-12-1 \
     nvidia-fabricmanager-535 \
+    nvidia-utils-535 \
     git \
     python3 \
     python3-venv \
