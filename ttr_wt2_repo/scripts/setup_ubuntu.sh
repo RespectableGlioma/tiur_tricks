@@ -18,8 +18,8 @@ sudo apt-get install -y --no-install-recommends \
   python3-venv \
   python3-pip \
   build-essential \
-  awscli \
-  linux-headers-$(uname -r)
+  linux-headers-$(uname -r) \
+  ubuntu-drivers-common
 
 # 3. Install Drivers from AWS S3 (Recommended for P4d)
 # This avoids repo issues and ensures AWS compatibility.
