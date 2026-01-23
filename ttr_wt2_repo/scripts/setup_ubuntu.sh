@@ -120,7 +120,27 @@ sudo dpkg -i cuda-keyring_1.1-1_all.deb
 sudo apt-get update
 
 # Detect installed driver version to pick FM
-DRIVER_VER=$(nvidia-smi --query-gpu=driver_version --format=csv,noheader | cut -d. -f1)
+echo ">>> Detecting driver version..."
+# Try to load kernel module if not loaded (avoids reboot in some cases)
+sudo modprobe nvidia || true
+
+DRIVER_VER=""
+if command -v nvidia-smi &> /dev/null; then
+    DRIVER_VER=$(nvidia-smi --query-gpu=driver_version --format=csv,noheader 2>/dev/null | cut -d. -f1 || true)
+fi
+
+if [ -z "$DRIVER_VER" ]; then
+    echo ">>> nvidia-smi failed or not found. Attempting to detect driver from dpkg..."
+    # Parse installed package name, e.g. nvidia-driver-535
+    DRIVER_VER=$(dpkg-query -W -f='${Package}\n' 'nvidia-driver-*' 2>/dev/null | grep -oE '[0-9]+' | head -n 1 || true)
+fi
+
+if [ -z "$DRIVER_VER" ]; then
+    echo "WARNING: Could not detect NVIDIA driver version. Fabric Manager install might fail."
+    echo "Please REBOOT and run this script again."
+    exit 1
+fi
+
 echo ">>> Detected installed driver major version: $DRIVER_VER"
 sudo apt-get install -y nvidia-fabricmanager-${DRIVER_VER}
 sudo systemctl enable nvidia-fabricmanager
