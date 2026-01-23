@@ -12,9 +12,9 @@ DISTRO=$ID$VERSION_ID
 DISTRO_NODOT=${DISTRO//./}
 
 # 2. Add NVIDIA repo
-wget https://developer.download.nvidia.com/compute/cuda/repos/$DISTRO_NODOT/x86_64/cuda-keyring_1.0-1_all.deb
-sudo dpkg -i cuda-keyring_1.0-1_all.deb
-rm cuda-keyring_1.0-1_all.deb
+wget https://developer.download.nvidia.com/compute/cuda/repos/$DISTRO_NODOT/x86_64/cuda-keyring_1.1-1_all.deb
+sudo dpkg -i cuda-keyring_1.1-1_all.deb
+rm cuda-keyring_1.1-1_all.deb
 
 sudo apt-get update
 
